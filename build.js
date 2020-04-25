@@ -127,6 +127,10 @@ const generateCompleteMD = async (tree, options) => {
         tableOfContents += `${'  '.repeat(item.level - 1)}* [${item.name}](#${encodeURIPath(item.name).replace(/%20/g, '-')})\n`;
     MD += `\n\n${tableOfContents}\n---`;
 
+    function getPumlNameIncludeExtension(pumlFile) {
+        return path.parse(pumlFile.dir).name + `.${options.DIAGRAM_FORMAT}`;
+    }
+
     for (const item of tree) {
         let name = getFolderName(item.dir, options.ROOT_FOLDER, options.HOMEPAGE_NAME);
 
@@ -139,40 +143,117 @@ const generateCompleteMD = async (tree, options) => {
         }
 
         //concatenate markdown files
-        const appendText = () => {
-            for (const mdFile of item.mdFiles) {
-                MD += '\n\n';
-                MD += mdFile;
+        // const appendText = () => {
+        //     for (const mdFile of item.mdFiles) {
+        //         MD += '\n\n';
+        //         MD += mdFile;
+        //     }
+        // };
+
+        for (const mdFile of item.mdFiles) {
+            MD += '\n\n';
+            MD += mdFile;
+        }
+
+        function getImageUrl(pumlFile) {
+            let diagramUrl = encodeURIPath(path.join(
+                '.',
+                item.dir.replace(options.ROOT_FOLDER, ''),
+                getPumlNameIncludeExtension(pumlFile)
+            ));
+            if (!options.GENERATE_LOCAL_IMAGES)
+                diagramUrl = plantUmlServerUrl(pumlFile.content);
+
+            let diagramImage = `![diagram](${diagramUrl})`;
+            let diagramLink = `[Go to ${path.parse(pumlFile.dir).name} diagram](${diagramUrl})`;
+
+            if (!options.INCLUDE_LINK_TO_DIAGRAM) //img
+                return diagramImage;
+            else //link
+                return diagramLink;
+        }
+
+        // get diagrams
+        function getDiagramsContent(pumlFiles) {
+            let diagramsContent = '';
+            for (const pumlFile of pumlFiles) {
+                diagramsContent += '\n\n';
+                diagramsContent += getImageUrl(pumlFile);
             }
-        };
+            return diagramsContent;
+        }
+
+        // function getInnerPumlFiles(pumlFiles) {
+        //     const innerPumlFiles = pumlFiles.filter(pumlFile => MD.contains(getPumlNameIncludeExtension(pumlFile)));
+        //     console.log(innerPumlFiles);
+        //     return innerPumlFiles;
+        // }
+        //
+        // function getOtherPumlFiles(pumlFiles) {
+        //     const externalPumlFiles = pumlFiles.filter(pumlFile => !MD.contains(getPumlNameIncludeExtension(pumlFile)));
+        //     console.log(externalPumlFiles);
+        //     return externalPumlFiles;
+        // }
+        //
+        // function replaceInnerPumlFiles(pumlFiles) {
+        //     pumlFiles.forEach(innerPumlFile => MD.replace(getPumlNameIncludeExtension(innerPumlFile), getImageUrl(innerPumlFile)));
+        // }
+
         //add diagrams
         const appendImages = () => {
+            const mdContent = item.mdFiles[0];
+            const innerPumlFiles = item.pumlFiles.filter(pumlFile => mdContent.contains(pumlFile.dir));
+            console.log(innerPumlFiles);
+            innerPumlFiles.forEach(innerPumlFile => mdContent.replace(innerPumlFile.dir, getImageUrl(innerPumlFile)))
+
+
+
             for (const pumlFile of item.pumlFiles) {
                 MD += '\n\n';
-                let diagramUrl = encodeURIPath(path.join(
-                    '.',
-                    item.dir.replace(options.ROOT_FOLDER, ''),
-                    path.parse(pumlFile.dir).name + `.${options.DIAGRAM_FORMAT}`
-                ));
-                if (!options.GENERATE_LOCAL_IMAGES)
-                    diagramUrl = plantUmlServerUrl(pumlFile.content);
-
-                let diagramImage = `![diagram](${diagramUrl})`;
-                let diagramLink = `[Go to ${path.parse(pumlFile.dir).name} diagram](${diagramUrl})`;
-
-                if (!options.INCLUDE_LINK_TO_DIAGRAM) //img
-                    MD += diagramImage;
-                else //link
-                    MD += diagramLink;
+                MD += getImageUrl(pumlFile);
             }
         };
 
+
+        /**
+         * ![](some_name.puml)
+         */
+        function getPumlIncludeFile(filename) {
+            return new RegExp(`!\\[(.+|)\\]\\(${filename}\\)`)
+            // return `/!\[(.+|)\]\(${filename}\)/gm`;
+        }
+
+        // const regex = '^!\\[(.+|)\\]\\(.+\\.puml\\)';
+
+        // console.log(MD);
+        for (const pumlFile of item.pumlFiles) {
+            console.log(getPumlIncludeFile(pumlFile.dir));
+            console.log(getPumlNameIncludeExtension(pumlFile));
+        }
+        const externalPumlFiles = item.pumlFiles.filter(pumlFile => !MD.search(getPumlIncludeFile(pumlFile.dir)));
+        console.log(`External PUML files: ${externalPumlFiles}`);
+        const innerPumlFiles = item.pumlFiles.filter(pumlFile => MD.search(getPumlIncludeFile(pumlFile.dir)));
+        console.log(`Internal PUML files: ${innerPumlFiles}`);
+        innerPumlFiles.forEach(innerPumlFile => MD = MD.replace(getPumlIncludeFile(innerPumlFile.dir), getImageUrl(innerPumlFile)))
+        // for (const pumlFile of innerPumlFiles) {
+        //     console.log(getPumlIncludeFile(pumlFile.dir));
+        //     console.log(getImageUrl(pumlFile));
+        //     console.log(MD.search(pumlFile.dir))
+        //
+        //
+        //     MD = MD.replace(new RegExp(getPumlIncludeFile(pumlFile.dir)), getImageUrl(pumlFile));
+        //     // console.log(getPumlNameIncludeExtension(pumlFile));
+        // }
+        // console.log(MD);
+
         if (options.DIAGRAMS_ON_TOP) {
-            appendImages();
-            appendText();
+            // appendImages();
+            // appendText();
+            MD = getDiagramsContent(externalPumlFiles) + MD;
         } else {
-            appendText();
-            appendImages();
+            MD += getDiagramsContent(externalPumlFiles);
+            // appendText();
+            // appendImages();
         }
     }
 
@@ -246,31 +327,31 @@ const generateCompletePDF = async (tree, options) => {
     //convert to pdf
     await markdownpdf(
         './' + path.join(
-            options.DIST_FOLDER,
-            `${options.PROJECT_NAME}_TEMP.md`
+        options.DIST_FOLDER,
+        `${options.PROJECT_NAME}_TEMP.md`
         ), {
-        stylesheet: [options.PDF_CSS],
-        pdf_options: {
-            scale: 1,
-            displayHeaderFooter: false,
-            printBackground: true,
-            landscape: false,
-            pageRanges: '',
-            format: 'A4',
-            width: '',
-            height: '',
-            margin: {
-                top: '1.5cm',
-                right: '1cm',
-                bottom: '1cm',
-                left: '1cm'
-            }
-        },
-        dest: path.join(
-            options.DIST_FOLDER,
-            `${options.PROJECT_NAME}.pdf`
-        )
-    }).catch(console.error);
+            stylesheet: [options.PDF_CSS],
+            pdf_options: {
+                scale: 1,
+                displayHeaderFooter: false,
+                printBackground: true,
+                landscape: false,
+                pageRanges: '',
+                format: 'A4',
+                width: '',
+                height: '',
+                margin: {
+                    top: '1.5cm',
+                    right: '1cm',
+                    bottom: '1cm',
+                    left: '1cm'
+                }
+            },
+            dest: path.join(
+                options.DIST_FOLDER,
+                `${options.PROJECT_NAME}.pdf`
+            )
+        }).catch(console.error);
 
     // remove temp file
     await fsextra.remove(path.join(
@@ -440,29 +521,29 @@ const generatePDF = async (tree, options, onProgress) => {
                     item.dir.replace(options.ROOT_FOLDER, ''),
                     `${options.MD_FILE_NAME}_TEMP.md`
                 ), {
-                stylesheet: [options.PDF_CSS],
-                pdf_options: {
-                    scale: 1,
-                    displayHeaderFooter: false,
-                    printBackground: true,
-                    landscape: false,
-                    pageRanges: '',
-                    format: 'A4',
-                    width: '',
-                    height: '',
-                    margin: {
-                        top: '1.5cm',
-                        right: '1cm',
-                        bottom: '1cm',
-                        left: '1cm'
-                    }
-                },
-                dest: path.join(
-                    options.DIST_FOLDER,
-                    item.dir.replace(options.ROOT_FOLDER, ''),
-                    `${name}.pdf`
-                )
-            }).catch(console.error);
+                    stylesheet: [options.PDF_CSS],
+                    pdf_options: {
+                        scale: 1,
+                        displayHeaderFooter: false,
+                        printBackground: true,
+                        landscape: false,
+                        pageRanges: '',
+                        format: 'A4',
+                        width: '',
+                        height: '',
+                        margin: {
+                            top: '1.5cm',
+                            right: '1cm',
+                            bottom: '1cm',
+                            left: '1cm'
+                        }
+                    },
+                    dest: path.join(
+                        options.DIST_FOLDER,
+                        item.dir.replace(options.ROOT_FOLDER, ''),
+                        `${name}.pdf`
+                    )
+                }).catch(console.error);
         }).then(() => {
             //remove temp file
             fsextra.removeSync(path.join(
